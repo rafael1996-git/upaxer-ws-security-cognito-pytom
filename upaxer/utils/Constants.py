@@ -1,0 +1,9 @@
+MAIN_PATH = '/api/security/cognito'
+TYPE_RETURN_CURSOR = 'cursor'
+TYPE_RETURN_NUMERIC = 'numeric'
+TYPE_RETURN_STRING = 'string'
+AUTH_FLOW = 'ADMIN_NO_SRP_AUTH'
+REFRESH_TOKEN = 'REFRESH_TOKEN_AUTH'
+GENERIC_UPAXER = 193
+AWS_REGION = 'us-east-1'
+SECRETS_MANAGER = 'secretsmanager'

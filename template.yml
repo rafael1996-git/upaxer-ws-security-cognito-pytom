@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM Template For Lambda Resource
+Parameters: #No modificiar, sólo se agregan parámetros en caso de ser contenido sensible (passwords, access keys, etc)
+  Environment: #No modificar
+    Type: String
+  Name: #No modificar
+    Type: String
+  Version:
+    Type: String
+  SecretOracle:
+    Type: String
+  SecretCognito:
+    Type: String
+Mappings:
+  Configuration: #Sólo se modifican los valores si se ocupa un rol, vpc, subnets o security group diferentes al genérico
+    dev:
+      ReservedConcurrentExecutions: 30 #Sólo se modifica el valor si el área de Infraestructura lo permite
+      LambdaSecurityGroupIds: #Sólo se modifica el valor si se requiere un security group diferente al genérico
+        - sg-0f4b1287f9f690fea
+      LambdaSubnetIds: #Sólo se modifica el valor si se requieren subnets diferentes a las genéricas
+        - subnet-03692d93cc69db081
+        - subnet-004299ac81d4b8c0d
+      CodeDeployRole: DevOpsCodeDeploy  #No se debe modificar
+      CodeDeployType: CodeDeployDefault.LambdaAllAtOnce #No se debe modificar
+      MemorySize: 512 #Sólo se modifica el valor si el área de Infraestructura lo permite
+      Timeout: 30 #Sólo se modifica el valor si el área de Infraestructura lo permite
+    qa:
+      ReservedConcurrentExecutions: 30
+      LambdaSecurityGroupIds:
+        - sg-0e64a3a2d0882a352
+      LambdaSubnetIds:
+        - subnet-03807f0337a201889
+        - subnet-0290dd7055dfd6e9f
+      CodeDeployRole: DevOpsCodeDeploy
+      CodeDeployType: CodeDeployDefault.LambdaAllAtOnce
+      MemorySize: 512
+      Timeout: 30
+    prod:
+      ReservedConcurrentExecutions: 30
+      LambdaSecurityGroupIds:
+        - sg-40d6ad35
+      LambdaSubnetIds:
+        - subnet-09389e54
+        - subnet-e9238ec6
+      CodeDeployRole: DevOpsCodeDeploy
+      CodeDeployType: CodeDeployDefault.LambdaAllAtOnce
+      MemorySize: 512
+      Timeout: 30
+  Layers: #Si la lambda no lleva layers, no es necesario este mapping, si lleva se debe crear un key por cada layer
+    dev: #Cada key corresponde a un layer, el nombre se recomienda sea igual al nombre del layer pero de la forma Upper CamelCase
+      CxOracleLayer: 'cx-oracle-layer:12'
+      FlaskLayer: 'flask-layer:3'
+    qa: #Cada key corresponde a un layer, el nombre se recomienda sea igual al nombre del layer pero de la forma Upper CamelCase
+      CxOracleLayer: 'cx-oracle-layer:1'
+      FlaskLayer: 'flask-layer:2'
+    prod: #Cada key corresponde a un layer, el nombre se recomienda sea igual al nombre del layer pero de la forma Upper CamelCase
+      CxOracleLayer: 'cx-oracle-lyer:1'
+      FlaskLayer: 'flask-layer:1'
+  Variables: #Si la lambda no lleva variables de entorrno, no es necesario este mapping, si lleva se debe crear un key por cada variable de entorno
+    dev: #Cada key corresponde a una variable de entorno, el nombre se recomienda de la forma Upper CamelCase
+      Environment: dev
+    qa: #Cada key corresponde a una variable de entorno, el nombre se recomienda de la forma Upper CamelCase
+      Environment: qa
+    prod: #Cada key corresponde a una variable de entorno, el nombre se recomienda de la forma Upper CamelCase
+      Environment: prod
+Resources:
+  LambdaRole: # No modificar nada
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: !Sub
+        - "Role for lambda ${Name}"
+        - {Name: !Ref Name}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Path: /devops/
+      Policies:
+        - PolicyName: !Ref Name
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: !Sub
+                  - 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:${Name}'
+                  - { Name: !Ref Name }
+      RoleName: !Ref Name
+      Tags:
+        - Key: "Type"
+          Value: "devops"
+  LambdaAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: LambdaFunction
+    Properties:
+      AlarmName: !Ref Name
+      AlarmDescription: Alarma de pruebas
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Maximum
+      Period: '60'
+      EvaluationPeriods: '1'
+      Threshold: '1'
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Name
+          Value:
+            Ref: LambdaFunction
+  LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Ref Name #No modificar
+      CodeUri: dist #No modificar
+      Handler: wsgi_handler.handler #Modificable
+      Runtime: python3.7 #Modificable
+      MemorySize: !FindInMap [ Configuration, !Ref Environment, MemorySize ] #No modificar
+      Timeout: !FindInMap [ Configuration, !Ref Environment, Timeout ] #No modificar
+      Description: !Sub
+          - "Release Version ${Version}"
+          - { Version: !Ref Version } #Modificable
+      ReservedConcurrentExecutions: !FindInMap [ Configuration, !Ref Environment, ReservedConcurrentExecutions] #No modificar
+      Policies: #No modificar
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'lambda:InvokeFunction'
+              Resource: !Sub
+                - 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:${Name}'
+                - { Name: !Ref Name }
+      Layers: #Sólo si lleva layers, se agrega un !Sub por cada layer requerido
+        - !Sub
+          - "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${Layer}"
+          - { Layer: !FindInMap [ Layers, !Ref Environment, CxOracleLayer ] }
+        - !Sub
+          - "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${Layer}"
+          - { Layer: !FindInMap [ Layers, !Ref Environment, FlaskLayer ] }
+      Environment: #Sólo si lleva variables de entorno
+        Variables:
+          APP_NAME: !Ref Name
+          ENVIRONMENT: !Ref Environment
+          SECRET_ORACLE: !Ref SecretOracle
+          SECRET_COGNITO: !Ref SecretCognito
+      AutoPublishAlias: live #No modificar
+      Role: !Sub
+        - "arn:aws:iam::${AWS::AccountId}:role/devops/${LambdaRole}" #No modificar
+        - { LambdaRole: !Ref LambdaRole }
+      DeploymentPreference: #No modificar
+        Role: !Sub #No modificar
+          - "arn:aws:iam::${AWS::AccountId}:role/${CodeDeployRole}" #No modificar
+          - { CodeDeployRole: !FindInMap [ Configuration, !Ref Environment, CodeDeployRole ] }
+        Type: !FindInMap [ Configuration, !Ref Environment, CodeDeployType ] #No modificar
+      VpcConfig:
+        SecurityGroupIds: !FindInMap [ Configuration, !Ref Environment, LambdaSecurityGroupIds ] #No modificar
+        SubnetIds: !FindInMap [ Configuration, !Ref Environment, LambdaSubnetIds ] #No modificar
